@@ -12,7 +12,6 @@ def main():
     parser.add_argument("mode", choices=["server", "client"])
     parser.add_argument("--host", default=os.environ.get("GLP_HOST", "localhost"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("GLP_PORT", "8443")))
-    parser.add_argument("--cafile", help="Cert tin cậy của server cho client (mặc định client/trusted-server.crt)")
     parser.add_argument("--download-dir", default="downloads", help="Thư mục tải file (client)")
     args = parser.parse_args()
     try:
@@ -21,7 +20,7 @@ def main():
             start_server(host=args.host, port=args.port)
         else:
             from client.client_cli import CLI
-            return CLI(args.host, args.port, cafile=args.cafile, download_dir=args.download_dir).run()
+            return CLI(args.host, args.port, download_dir=args.download_dir).run()
     except (GLPError, OSError) as error:
         print(error_message(str(error)), file=sys.stderr)
         return 1

@@ -1,8 +1,20 @@
-import re, socket, ssl, threading, time
-from Error import *
-from GLP import *
+from pathlib import Path
+import re
+import socket
+import ssl
+import threading
+import time
+
+from Error import GLPConnectionError, GLPTimeoutError, PeerClosedError, ProtocolError
+from GLP import (CRLF, DEFAULT_SESSION, MAGIC_BYTES, MAX_ARG, MAX_ARGS, MAX_FRAME,
+                 MAX_LINE, ROUTE, Request, Response)
+
 
 class GLP_Connection:
+    _server_pem = Path(__file__).with_name("server") / ".runtime" / "server.pem"
+    _server_tls: ssl.SSLContext | None = None
+    _server_tls_lock = threading.Lock()
+
     def __init__(self, sock: socket.socket, timeout: float = 10.0):
         self.sock = sock
         self.sock.settimeout(timeout)
@@ -10,49 +22,46 @@ class GLP_Connection:
         self._send_lock = threading.Lock()
 
     @classmethod
-    def connect(cls, host, port, certfile, timeout=10):
-        try: context = ssl.create_default_context(cafile=certfile)
-        except FileNotFoundError as error: raise GLPConnectionError(f"Thiếu cert tại {certfile}. Tạo cert tại đó hoặc dùng --cafile.") from error
-        except OSError as error: raise GLPConnectionError(f"Không đọc được chứng chỉ {certfile}. {error}") from error
-        
+    def connect(cls, host, port, timeout=10):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
         context.minimum_version = ssl.TLSVersion.TLSv1_3
-        raw = socket.create_connection((host, port), timeout=timeout)
-        try: tls = context.wrap_socket(raw, server_hostname=host)
-        except ssl.SSLCertVerificationError as error:
-            raw.close()
-            raise GLPConnectionError(f"Không xác minh được chứng chỉ TLS của {host}. {error.verify_message}") from error
-        except Exception:
-            raw.close()
-            raise
-        conn = cls(tls, timeout)
-        try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        try: # TLS handshake
+            sock = context.wrap_socket(sock)
+            conn = cls(sock, timeout)
+            # GLP handshake (client side)
             conn.send(Request("SYS.PING", DEFAULT_SESSION))
             response = conn.recv()
             if not isinstance(response, Response) or response.action != "OK.PONG" or response.args:
                 raise ProtocolError("Server không trả OK.PONG hợp lệ")
             return conn
-        except Exception:
-            conn.close()
+        except BaseException:
+            sock.close()
             raise
 
     @classmethod
-    def accept(cls, sock, context, *, timeout=10):
-        sock.settimeout(timeout)
+    def accept(cls, sock, *, timeout=10):
         try:
-            tls = context.wrap_socket(sock, server_side=True)
-        except Exception:
-            sock.close()
-            raise
-        conn = cls(tls, timeout)
-        try:
-            request = conn.recv()
-            if (not isinstance(request, Request) or request.route != "SYS.PING"
-                    or request.args or request.session_id != DEFAULT_SESSION):
+            with cls._server_tls_lock:
+                context = cls._server_tls
+                if context is None: # TLS handshake (Server side)
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    context.minimum_version = ssl.TLSVersion.TLSv1_3
+                    try: context.load_cert_chain(cls._server_pem)
+                    except OSError as error: raise GLPConnectionError(f"Không nạp được PEM {cls._server_pem} ({error})") from error
+                    cls._server_tls = context
+            sock.settimeout(timeout)
+            sock = context.wrap_socket(sock, server_side=True)
+            conn = cls(sock, timeout)
+            request = conn.recv() # Check SYS PING and response OK PONG
+            if (not isinstance(request, Request) or request.route != "SYS.PING" or request.args or request.session_id != DEFAULT_SESSION):
                 raise ProtocolError("Gói đầu phải là SYS.PING chưa đăng nhập, không args")
             conn.send(Response("OK.PONG", DEFAULT_SESSION))
             return conn
-        except Exception:
-            conn.close()
+        except BaseException:
+            sock.close()
             raise
 
     def send(self, frame: Request | Response):

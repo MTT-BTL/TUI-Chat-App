@@ -14,12 +14,15 @@ def connect(dbfile) -> sqlite3.Connection:
 def init(database: sqlite3.Connection):
     database.row_factory = sqlite3.Row
     database.execute("PRAGMA journal_mode=WAL;")
+    database.execute("DROP TABLE IF EXISTS users;")
+    database.execute("PRAGMA journal_mode=WAL;")
     database.execute("""
         CREATE TABLE IF NOT EXISTS users(
             user_id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE,
             dispname TEXT NOT NULL, salt BLOB NOT NULL, passwd_h BLOB NOT NULL
         )
     """)
+    database.execute("DROP TABLE IF EXISTS messages;")
     database.execute("""
         CREATE TABLE IF NOT EXISTS messages(
             msg_id INTEGER PRIMARY KEY AUTOINCREMENT, sender_id TEXT NOT NULL, receiver_id TEXT,
@@ -31,6 +34,8 @@ def register(database: sqlite3.Connection, username: str, password: str, dispnam
     user_id, salt = uuid.uuid4().hex, urandom(32)
     dispname = username if dispname is None else dispname
     digest = sha256(password.encode() + salt).digest()
+    if username == "GLOBAL": 
+        raise AppError("Username không hợp lệ")
     try:
         database.execute(
             "INSERT INTO users(user_id,username,dispname,salt,passwd_h) VALUES(?,?,?,?,?)",

@@ -74,7 +74,8 @@ class Response:
 
     def validate(self):
         if not ACTION.fullmatch(self.action): raise ProtocolError("Action không hợp lệ")
-        if self.session_update != HOLDING_SESSION and not valid_session(self.session_update, HOLDING_SESSION): raise ProtocolError("Session update không hợp lệ")
+        if self.session_update != HOLDING_SESSION and not valid_session(self.session_update, DEFAULT_SESSION):
+            raise ProtocolError("Session update không hợp lệ")
 
     def to_bytes(self) -> bytes:
         self.validate()

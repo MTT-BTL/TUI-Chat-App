@@ -67,7 +67,6 @@ def dispatch(response: Response) -> Result:
     except ValueError as error: raise ProtocolError(f"Response {action}: {error}") from error
     raise ProtocolError(f"Response chưa được xử lý: {action}")
 
-
 class Backend:
     CONNECT_TIMEOUT = 7.5
     REQUEST_TIMEOUT = 15.0
@@ -75,9 +74,8 @@ class Backend:
     MAX_MISSED_PONGS = 4
     EVENTS = {"CHAT.MESSAGE", "FILE.NOTICE"}
 
-    def __init__(self, host="localhost", port=8443, emit=lambda result: None, cafile=None):
+    def __init__(self, host="localhost", port=8443, emit=lambda result: None):
         self.host, self.port, self.emit = host, port, emit
-        self.cafile = cafile or Path(__file__).with_name("trusted-server.crt")
         self.connected = False
         self.user = {}
         self._session = DEFAULT_SESSION
@@ -91,9 +89,7 @@ class Backend:
         self._threads = []
 
     def start(self):
-        self._conn = GLP_Connection.connect(
-            self.host, self.port, self.cafile, timeout=self.CONNECT_TIMEOUT,
-        )
+        self._conn = GLP_Connection.connect(self.host, self.port, timeout=self.CONNECT_TIMEOUT)
         self.connected = True
         self._last_pong = time.monotonic()
         for target in (self._read_loop, self._heartbeat_loop):
@@ -245,33 +241,29 @@ class Backend:
         return self._call("FILE.LIST", target.encode(), str(cursor).encode(), expected="files")
 
     def _progress(self, label, done, total):
-        # In theo mốc 10% để file lớn không làm đầy terminal.
         if done * 10 // total != (done - 1) * 10 // total:
             self.emit(Result("progress", (label, done, total)))
 
     def upload(self, target, raw_path):
         path = Path(raw_path).expanduser()
-        if not path.is_file():
-            raise FileError("Đường dẫn upload phải là file")
+        if not path.is_file(): raise FileError("Đường dẫn upload phải là file")
         with path.open("rb") as source:
             meta = FileMetadata.from_file(source, path.name)
             self.emit(Result("notice", message=f"Upload {meta.name} ({meta.segments} segment)"))
             with self._exchange() as inbox:
                 self._send("FILE.UPLOAD", target.encode(), json.dumps(asdict(meta)).encode())
                 result = self._receive(inbox, "ready" if meta.segments else "stored")
-                if not result.ok:
-                    return result
+                if not result.ok: return result
                 file_id = None
                 if meta.segments:
                     file_id, count = result.data
-                    if count != meta.segments:
-                        raise ProtocolError("READY sai số segment")
+                    if count != meta.segments: raise ProtocolError("READY sai số segment")
+
                     for index, data in read_segments(source, meta.size):
                         self._send("FILE.SEGMENT", file_id.encode(), str(index).encode(), data)
                         self._progress("Gửi", index + 1, count)
                     result = self._receive(inbox, "stored")
-                if result.ok and (FileMetadata.from_dict(result.data) != meta
-                                  or (file_id is not None and result.data.get("file_id") != file_id)):
+                if result.ok and (FileMetadata.from_dict(result.data) != meta or (file_id is not None and result.data.get("file_id") != file_id)):
                     raise ProtocolError("STORED sai metadata")
                 return result
 
@@ -283,8 +275,7 @@ class Backend:
             with self._exchange() as inbox:
                 self._send("FILE.DOWNLOAD", file_id.encode())
                 result = self._receive(inbox, "metadata")
-                if not result.ok:
-                    return result
+                if not result.ok: return result
                 info = result.data
                 meta = FileMetadata.from_dict(info)
                 if info.get("file_id") != file_id or info.get("segment_size") != CHUNK_SIZE:
@@ -295,8 +286,7 @@ class Backend:
                     writer = SegmentWriter(stream, meta)
                     for _ in range(meta.segments):
                         segment = self._receive(inbox, "segment")
-                        if not segment.ok:
-                            return segment
+                        if not segment.ok: return segment
                         frame_id, index, data = segment.data
                         if frame_id != file_id:
                             raise ProtocolError("DATA sai file ID")

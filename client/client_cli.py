@@ -1,9 +1,11 @@
 """Đọc lệnh trên stdin và hiển thị kết quả từ Backend."""
 import getpass
+import os
 from pathlib import Path
 import shlex
 import sys
 import threading
+from unicodedata import category, east_asian_width
 
 try:
     import readline  # Giữ phần đang gõ trên terminal có readline.
@@ -29,19 +31,18 @@ def clean(value): return "".join(char for char in str(value) if char.isprintable
 
 def file_size(size):
     for unit in ("B", "KiB", "MiB", "GiB"):
-        if size < 1024 or unit == "GiB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        if size < 1024 or unit == "GiB": return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
 
 
 class CLI:
-    def __init__(self, host="localhost", port=8443, cafile=None, download_dir="downloads",
+    def __init__(self, host="localhost", port=8443, download_dir="downloads",
                  backend=None, reader=input, password_reader=getpass.getpass, output=None):
         self.output = output or sys.stdout
         self.reader, self.password_reader = reader, password_reader
         self._print_lock = threading.RLock()
         self._prompt = ""
-        self.backend = backend or Backend(host, port, self.notify, cafile=cafile)
+        self.backend = backend or Backend(host, port, self.notify)
         self.download_dir = Path(download_dir)
         self.target = None
         self.chats = []
@@ -59,14 +60,47 @@ class CLI:
                     self.output.write(readline.get_line_buffer())
             self.output.flush()
 
-    def read(self, prompt):
+    def read(self, prompt, *, transient=False):
         with self._print_lock:
             self._prompt = prompt
+        line = None
         try:
-            return self.reader(prompt)
+            line = self.reader(prompt)
+            return line
         finally:
             with self._print_lock:
                 self._prompt = ""
+                if (transient and line is not None and self.reader is input
+                        and self.output is sys.stdout and self.output.isatty()
+                        and sys.stdin.isatty() and os.environ.get("TERM") != "dumb"):
+                    self._erase_input(prompt + line)
+
+    def _erase_input(self, text):
+        # Dọn các hàng terminal đã dùng cho dòng nhập, kể cả khi dòng bị wrap.
+        try:
+            columns = os.get_terminal_size(self.output.fileno()).columns or 80
+        except OSError:
+            return
+        rows, column = 1, 0
+        for char in text:
+            if char == "\n":
+                rows, column = rows + 1, 0
+                continue
+            char_type = category(char)
+            if char_type in ("Mn", "Me", "Cf"):
+                continue
+            if char_type == "Cc":
+                width = 8 - column % 8 if char == "\t" and readline is None else 2
+            else:
+                width = 2 if east_asian_width(char) in ("W", "F") else 1
+            if column + width > columns:
+                rows, column = rows + 1, 0
+            column += width
+        if column == columns and readline is not None:
+            if getattr(readline, "backend", "") == "editline" or "libedit" in (readline.__doc__ or ""):
+                rows += 1
+        self.output.write(f"\033[{rows}F\033[J")
+        self.output.flush()
 
     def message(self, row):
         mine = row["sender_id"] == self.backend.user.get("user_id")
@@ -106,8 +140,7 @@ class CLI:
 
     def listchat(self):
         result = self.backend.list_chats()
-        if not self.accept(result):
-            return
+        if not self.accept(result): return
         self.chats = result.data
         self.target = None
         for index, chat in enumerate(self.chats):
@@ -247,8 +280,9 @@ class CLI:
                         if not self.authenticate():
                             break
                     else:
-                        label = clean(self.target["username"]) if self.target else "menu"
-                        if not self.execute(self.read(f"{label}> ")):
+                        in_chat = self.target is not None
+                        prompt = "> " if in_chat else "menu> "
+                        if not self.execute(self.read(prompt, transient=in_chat)):
                             break
                 except (GLPError, OSError, ValueError) as error:
                     self.write(error_message(str(error)))

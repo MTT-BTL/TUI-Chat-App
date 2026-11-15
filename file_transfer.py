@@ -51,8 +51,7 @@ class FileMetadata:
     def from_dict(cls, value):
         if not isinstance(value, dict):
             raise FileError("Metadata phải là object JSON")
-        return cls(value.get("name"), value.get("size"),
-                   value.get("segments"), value.get("sha256"))
+        return cls(value.get("name"), value.get("size"), value.get("segments"), value.get("sha256"))
 
     @classmethod
     def from_file(cls, stream: BinaryIO, name: str):
@@ -60,10 +59,8 @@ class FileMetadata:
         if not 0 <= size <= MAX_FILE_SIZE:
             raise FileError("File vượt giới hạn 1 GiB")
         digest = sha256()
-        for _, data in read_segments(stream, size):
-            digest.update(data)
-        if stream.read(1):
-            raise FileError("File thay đổi khi đọc metadata")
+        for _, data in read_segments(stream, size): digest.update(data)
+        if stream.read(1): raise FileError("File thay đổi khi đọc metadata")
         stream.seek(0)
         return cls(name, size, segment_count(size), digest.hexdigest())
 

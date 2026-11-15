@@ -1,18 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
-from ipaddress import IPv4Address
 from pathlib import Path
-import re
 import socket
-import ssl
-import subprocess
 import sys
-from tempfile import TemporaryDirectory
 import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from Error import GLPConnectionError, GLPTimeoutError, ProtocolError, error_message
+from Error import GLPTimeoutError, ProtocolError, error_message
 from GLP import Request
 from GLPConn import GLP_Connection
 import server.db as db
@@ -26,35 +21,6 @@ app_lock = threading.Lock()
 PING_INTERVAL = 15.0
 MAX_MISSED_PINGS = 4
 HEARTBEAT_TIMEOUT = PING_INTERVAL * MAX_MISSED_PINGS
-
-def generate_tls_keys(cert_path: Path, key_path: Path, host: str):
-    if cert_path.exists() and key_path.exists():
-        return
-    if cert_path.exists() or key_path.exists():
-        raise GLPConnectionError("Server cần đủ server.crt và server.key trong thư mục runtime")
-
-    names = ["DNS:localhost", "IP:127.0.0.1"]
-    if host not in ("localhost", "127.0.0.1", "0.0.0.0"):
-        try:
-            names.append(f"IP:{IPv4Address(host)}")
-        except ValueError:
-            if not re.fullmatch(r"[a-zA-Z0-9.-]+", host):
-                raise GLPConnectionError("Hostname không hợp lệ để cấp chứng chỉ TLS") from None
-            names.append(f"DNS:{host}")
-
-    with TemporaryDirectory(dir=cert_path.parent) as folder:
-        cert, key = Path(folder) / "server.crt", Path(folder) / "server.key"
-        try:
-            subprocess.run([
-                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "365",
-                "-subj", "/CN=localhost", "-addext", "subjectAltName=" + ",".join(names),
-                "-out", str(cert), "-keyout", str(key),
-            ], check=True, stderr=subprocess.DEVNULL)
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise GLPConnectionError("Không tạo được chứng chỉ TLS bằng openssl") from error
-        key.chmod(0o600)
-        key.replace(key_path)
-        cert.replace(cert_path)
 
 def handle_client(conn: GLP_Connection, addr, auth_service, online, message):
     print(f"[+] Client {addr} đã kết nối TLS 1.3.")
@@ -115,9 +81,6 @@ def handle_client(conn: GLP_Connection, addr, auth_service, online, message):
 
 def start_server(host="127.0.0.1", port=8443, max_workers=20):
     RUNTIME_DIR.mkdir(mode=0o700, exist_ok=True)
-    cert_path = RUNTIME_DIR / "server.crt"
-    key_path = RUNTIME_DIR / "server.key"
-    generate_tls_keys(cert_path, key_path, host)
 
     database = db.connect(RUNTIME_DIR / "server.db")
     db.init(database)
@@ -127,23 +90,18 @@ def start_server(host="127.0.0.1", port=8443, max_workers=20):
     message = MessageService(database)
     message.files = FileService(database, RUNTIME_DIR / "files")
 
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-    context.minimum_version = ssl.TLSVersion.TLSv1_3
-
     raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     raw_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     raw_socket.bind((host, port))
     raw_socket.listen(max_workers)
     
-    print(f"[*] GLP Server đang lắng nghe tại {host}:{port}...")
-    print(f"[*] Chứng chỉ công khai dành cho client nằm tại {cert_path}")
+    print(f"[*] GLP Server đang lắng nghe tại {host}:{port}", flush=True)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         while True:
             try:
                 client_sock, addr = raw_socket.accept()
-                glp_conn = GLP_Connection.accept(client_sock, context, timeout=30.0)
+                glp_conn = GLP_Connection.accept(client_sock, timeout=30.0)
                 # Truyền online vào worker
                 executor.submit(handle_client, glp_conn, addr, auth_service, online, message)
             except (OSError, EOFError, ProtocolError) as error:

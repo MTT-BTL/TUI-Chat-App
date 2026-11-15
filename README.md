@@ -291,31 +291,54 @@ benchmark throughput/peak RAM, crash đúng giữa rename-INSERT hoặc xác nh�
 
 # CLI và cách chạy
 
-`app.py` chọn mode server hoặc client. Từ thư mục dự án, chạy server ở terminal
-thứ nhất. Server dùng OpenSSL để tự tạo cert và key ở lần đầu.
+`app.py` chọn mode server hoặc client. Server gọi `GLP_Connection.accept(sock)`,
+client gọi `GLP_Connection.connect(host, port)`. Hai hàm tự bắt tay TLS rồi trao
+đổi `SYS.PING` và `OK.PONG`. Server nạp cert và key từ một file `server.pem`
+ở kết nối đầu tiên và dùng lại TLS context cho các kết nối sau.
+TLS 1.3 tự thiết lập khóa phiên và mã hóa GLP. Demo dùng giả định server đáng
+tin và tắt xác minh danh tính server ở phía client. GLP dùng username/password
+để server xác thực tài khoản.
+
+Trên máy server, tạo PEM một lần từ thư mục dự án khi chưa có file này.
+
+```sh
+(
+  umask 077
+  mkdir -p server/.runtime
+  openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj /CN=GLP \
+    -keyout server/.runtime/server.pem -out server/.runtime/server.pem
+)
+```
+
+Chạy hai lệnh ở hai terminal nếu demo trên một máy.
 
 ```sh
 python3 app.py server
-```
-
-Ở terminal thứ hai, chép cert công khai từ server rồi chạy client.
-
-```sh
-cp server/.runtime/server.crt client/trusted-server.crt
 python3 app.py client
 ```
 
-Client dùng bản cert tại `client/trusted-server.crt` để xác minh server. Có thể
-dùng `--cafile` để chọn một bản cert khác. Private key nằm trên server. TLS
-xác minh server, còn GLP xác minh tài khoản bằng username/password. `getpass`
-ẩn password khi nhập trên terminal.
+## Chạy trên hai máy cùng LAN
 
-Mặc định client kết nối `localhost:8443`. Trên LAN, dùng `--host` với IP LAN
-cụ thể của server khi tạo cert lần đầu và nhập cùng IP đó ở client. Chuyển
-bản cert công khai sang máy client qua kênh tin cậy. Nếu cấp lại cert cho
-server, cấp lại bản sao cho client.
+Dùng cùng bản source trên cả hai máy. Ví dụ máy A chạy server và có IPv4 LAN
+là `192.168.1.20`. Thay địa chỉ ví dụ bằng IPv4 của máy A.
 
-`server/.runtime/` chứa cert, key, SQLite và file đã upload. Client ghi file vào
+1. Trên máy A, tạo PEM theo lệnh trên rồi chạy server với IPv4 LAN.
+
+   ```sh
+   python3 app.py server --host 192.168.1.20 --port 8443
+   ```
+
+2. Trên máy B, chạy client với địa chỉ của máy A.
+
+   ```sh
+   python3 app.py client --host 192.168.1.20 --port 8443
+   ```
+
+Client cần truy cập được cổng TCP 8443 trên máy A. Nếu timeout, kiểm tra
+IPv4, firewall và việc mạng Wi-Fi có cho hai máy liên lạc trực tiếp hay không.
+
+`server/.runtime/` chứa PEM, SQLite và file đã upload, thư mục này được Git bỏ qua.
+Client ghi file vào
 `downloads/` hoặc thư mục chọn qua `--download-dir`.
 
 ```text

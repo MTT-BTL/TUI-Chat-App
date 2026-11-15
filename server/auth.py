@@ -98,10 +98,8 @@ class UserManager:
             user_id = self.conns.pop(conn)
             if self.users.get(user_id) is conn:
                 remaining = [peer for peer, uid in self.conns.items() if uid == user_id]
-                if remaining:
-                    self.users[user_id] = remaining[-1]
-                else:
-                    self.users.pop(user_id, None)
+                if remaining: self.users[user_id] = remaining[-1]
+                else: self.users.pop(user_id, None)
 
     def user_ids(self) -> list: return list(self.users.keys())
     def get_conn(self, user_id): return self.users.get(user_id)

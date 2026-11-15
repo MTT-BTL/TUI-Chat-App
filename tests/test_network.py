@@ -1,16 +1,18 @@
 """TCP/TLS thật trên loopback: backend/stream/chat/heartbeat và lỗi kết nối."""
 from hashlib import sha256
 import json
+from pathlib import Path
 import queue
 import socket
 import ssl
+import subprocess
+from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
 from unittest.mock import patch
 
-from support import LiveServer, GLP_Connection, Request, Response, certificate, db
-from Error import GLPConnectionError
+from support import LiveServer, GLP_Connection, Request, Response, db
 from GLP import DEFAULT_SESSION
 from file_transfer import CHUNK_SIZE
 from server import server
@@ -18,6 +20,19 @@ from server.files import Download, reply
 
 
 class NetworkTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        folder = TemporaryDirectory(prefix="glp-test-tls-")
+        cls.addClassCleanup(folder.cleanup)
+        pem = str(Path(folder.name) / "server.pem")
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+            "-subj", "/CN=GLP-test", "-out", pem, "-keyout", pem,
+        ], check=True, stderr=subprocess.DEVNULL)
+        tls = patch.multiple(GLP_Connection, _server_pem=pem, _server_tls=None)
+        tls.start()
+        cls.addClassCleanup(tls.stop)
+
     def live(self, handler=None):
         live = LiveServer(handler)
         self.addCleanup(live.close)
@@ -75,7 +90,7 @@ class NetworkTests(unittest.TestCase):
 
     def test_upload_replies_only_ready_and_stored(self):
         live = self.live()
-        conn = GLP_Connection.connect("localhost", live.port, live.cert, timeout=1)
+        conn = GLP_Connection.connect("localhost", live.port, timeout=1)
         self.addCleanup(conn.close)
         conn.send(Request("AUTH.REGISTER", DEFAULT_SESSION, (b"sender01", b"test-password")))
         token = conn.recv().session_update
@@ -105,7 +120,7 @@ class NetworkTests(unittest.TestCase):
     def test_invalid_segment_aborts_only_that_connection_and_cleans_upload(self):
         live = self.live()
         peer, _ = live.backend("receiver")
-        conn = GLP_Connection.connect("localhost", live.port, live.cert, timeout=1)
+        conn = GLP_Connection.connect("localhost", live.port, timeout=1)
         self.addCleanup(conn.close)
         conn.send(Request("AUTH.REGISTER", DEFAULT_SESSION, (b"sender01", b"test-password")))
         token = conn.recv().session_update
@@ -227,12 +242,12 @@ class NetworkTests(unittest.TestCase):
         with self.assertRaises(ConnectionError):
             client.list_chats()
 
-    def test_tls_rejects_untrusted_certificate(self):
+    def test_tls_and_login_with_only_host_and_port(self):
         live = self.live()
-        wrong_cert, _ = certificate(live.folder, "untrusted")
-        with self.assertRaisesRegex(GLPConnectionError, r"^\[!\] Không xác minh") as error:
-            GLP_Connection.connect("localhost", live.port, wrong_cert, timeout=1)
-        self.assertIsInstance(error.exception.__cause__, ssl.SSLCertVerificationError)
+        client, _ = live.backend("student1")
+        self.assertIsInstance(client._conn.sock, ssl.SSLSocket)
+        self.assertEqual(client._conn.sock.version(), "TLSv1.3")
+        self.assertTrue(client.list_chats().ok)
 
     def test_server_missing_ping_expires_session_and_partial_upload(self):
         with patch.object(server, "HEARTBEAT_TIMEOUT", 0.2):
@@ -240,7 +255,7 @@ class NetworkTests(unittest.TestCase):
             db.register(live.database, "student1", "test-password")
             for traffic in ("other_request", "invalid_ping", "partial_frame"):
                 with self.subTest(traffic=traffic):
-                    conn = GLP_Connection.connect("localhost", live.port, live.cert, timeout=1)
+                    conn = GLP_Connection.connect("localhost", live.port, timeout=1)
                     self.addCleanup(conn.close)
                     conn.send(Request("AUTH.LOGIN", DEFAULT_SESSION, (b"student1", b"test-password")))
                     token = conn.recv().session_update
@@ -266,9 +281,9 @@ class NetworkTests(unittest.TestCase):
                                 time.sleep(0.02)
                             except (EOFError, OSError):
                                 break
-                    deadline = time.monotonic() + 1
-                    while live.messages.files.uploads and time.monotonic() < deadline:
-                        time.sleep(0.01)
+                    worker = live.workers[-1]
+                    worker.join(timeout=1)
+                    self.assertFalse(worker.is_alive())
                     self.assertEqual(live.messages.files.uploads, {})
                     self.assertEqual(live.auth.session_manager, {})
                     self.assertEqual(live.online.user_ids(), [])

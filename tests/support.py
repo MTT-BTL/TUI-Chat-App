@@ -3,8 +3,6 @@ import json
 from pathlib import Path
 import queue
 import socket
-import ssl
-import subprocess
 import sys
 import tempfile
 import threading
@@ -69,23 +67,9 @@ class Fixture:
         self.temp.cleanup()
 
 
-def certificate(folder, stem="server"):
-    cert, key = Path(folder) / (stem + ".crt"), Path(folder) / (stem + ".key")
-    subprocess.run([
-        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-        "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
-        "-out", str(cert), "-keyout", str(key),
-    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return cert, key
-
-
 class LiveServer(Fixture):
     def __init__(self, handler=None):
         super().__init__()
-        self.cert, key = certificate(self.folder)
-        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.context.minimum_version = ssl.TLSVersion.TLSv1_3
-        self.context.load_cert_chain(self.cert, key)
         self.listener = socket.socket()
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(20)
@@ -112,7 +96,7 @@ class LiveServer(Fixture):
     def _serve(self, raw, addr):
         conn = None
         try:
-            conn = GLP_Connection.accept(raw, self.context, timeout=2)
+            conn = GLP_Connection.accept(raw, timeout=2)
             if self.handler:
                 self.handler(conn)
             else:
@@ -127,7 +111,7 @@ class LiveServer(Fixture):
 
     def backend(self, username=None, interval=None):
         events = queue.Queue()
-        client = Backend("localhost", self.port, events.put, cafile=self.cert)
+        client = Backend("localhost", self.port, events.put)
         if interval:
             client.PING_INTERVAL = interval
         self.clients.append(client)
