@@ -1,38 +1,29 @@
 from dataclasses import dataclass
 import re
-from file_protocol import FILE_ROUTES, FILE_STATUSES
+from Error import ProtocolError, error_message
 
 MAGIC_BYTES = b"GLP\r\n"
 CRLF = b"\r\n"
 DEFAULT_SESSION = "_THIS_IS_THE_DEFAULT_SESSION_ID_"
 HOLDING_SESSION = "_YOU_DO_NOT_CHANGE_YOUR_SESSION_"
-FUNCS = {
-    "SYS": ["PING", "USERS"], 
+FUNCS = { # Request TYPE.ACTION, ROUTE.ACTION
+    "SYS": ["PING"],
     "AUTH": ["LOGIN", "REGISTER", "LOGOUT"],
-    "DASH": ["HOME", "SELF", "RENAME"],
-    "MSG": ["PRIVATE", "GLOBAL", "GETPRI", "GETGLO", "CHATS"]
+    "CHAT": ["LIST", "SEND", "HISTORY"],
+    "FILE": ["UPLOAD", "SEGMENT", "DOWNLOAD", "CANCEL", "LIST"],
 }
-STATUSES = {
-    "OK": ["PONG", "AUTH", "USERS", "HISTORY", "CHATS", "PROFILE"],
-    "REDIRECT": ["LOGIN", "HOME"], 
-    "DENY": ["AUTH"], 
-    "ERROR": ["SERVER", "CLIENT", "TIMEOUT"],
-    "EVT": ["RECV", "SENT"]
+STATUSES = { # Response tương tự request
+    "OK": ["PONG"],
+    "AUTH": ["OK", "BYE"],
+    "CHAT": ["ITEMS", "PAGE", "SENT", "MESSAGE"],
+    "FILE": ["READY", "STORED", "CANCELLED", "ITEMS", "META", "DATA", "NOTICE"],
+    "ERROR": ["SERVER", "CLIENT", "AUTH", "FILE"],
 }
 MAX_LINE, MAX_ARGS, MAX_ARG, MAX_FRAME = 64, 4, 65536, 262144
 
-# Bổ sung riêng FILE; encoder/parser và các route cũ giữ nguyên.
-FUNCS["FILE"] = FILE_ROUTES
-STATUSES["FILE"] = FILE_STATUSES
-
 ROUTE = re.compile("|".join(re.escape(f"{Type}.{Action}") for Type, Actions in FUNCS.items() for Action in Actions))
 TOKEN = re.compile(r"[0-9a-f]{32}")
-ACTION = re.compile("|".join(
-    re.escape(f"{Type}.{Action}" if Action else Type)
-    for Type, Actions in STATUSES.items() for Action in Actions or [""]
-))
-
-class ProtocolError(ValueError): """"""
+ACTION = re.compile("|".join(re.escape(f"{Type}.{Action}" if Action else Type) for Type, Actions in STATUSES.items() for Action in Actions or [""]))
 
 # ========================== PACKING ========================== #
 def _head(value: str) -> bytes: # Một dòng header ASCII + CRLF.
@@ -59,15 +50,15 @@ def _bounded(wire: bytes) -> bytes:
 # ========================== PACKING ========================== #
 
 
-def valid_session(value: str) -> bool: return value == DEFAULT_SESSION or value == HOLDING_SESSION or bool(TOKEN.fullmatch(value))
+def valid_session(value: str, default: str) -> bool: return value == default or bool(TOKEN.fullmatch(value))
 
 @dataclass(frozen=True)
 class Request:
     route: str
-    session_id: str
+    session_id: str = DEFAULT_SESSION
     args: tuple[bytes, ...] = ()
     def validate(self):
-        if not valid_session(self.session_id) or not ROUTE.fullmatch(self.route):
+        if not valid_session(self.session_id, DEFAULT_SESSION) or not ROUTE.fullmatch(self.route):
             raise ProtocolError("Session hoặc route TYPE.ACTION sai format")
 
     def to_bytes(self) -> bytes:
@@ -83,8 +74,12 @@ class Response:
 
     def validate(self):
         if not ACTION.fullmatch(self.action): raise ProtocolError("Action không hợp lệ")
-        if self.session_update != "-" and not valid_session(self.session_update): raise ProtocolError("Session update không hợp lệ")
+        if self.session_update != HOLDING_SESSION and not valid_session(self.session_update, HOLDING_SESSION): raise ProtocolError("Session update không hợp lệ")
 
     def to_bytes(self) -> bytes:
         self.validate()
         return _bounded(MAGIC_BYTES + _head(self.action) + _head(self.session_update) + CRLF + _body(self.args))
+
+
+def error_response(action: str, message: str, *, session_update=HOLDING_SESSION) -> Response:
+    return Response(action, session_update, (error_message(message).encode("utf-8"),))

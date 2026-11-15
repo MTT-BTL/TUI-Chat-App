@@ -1,26 +1,31 @@
-#!/Users/admin/miniforge3/envs/ctfenv/bin/python
+#!/usr/bin/env python3
+"""Chạy server hoặc CLI client; chỉ dùng Python standard library."""
 import argparse
-import sys
 import os
+import sys
 
+from Error import GLPError, error_message
 
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 def main():
-    parser = argparse.ArgumentParser(description="Distributed Client-Server GLP Application")
-    parser.add_argument("mode", choices=["server", "client", "hacker"], help="Server, client thường hoặc client hacker")
+    parser = argparse.ArgumentParser(description="GLP chat qua TCP/TLS, client CLI")
+    parser.add_argument("mode", choices=["server", "client"])
     parser.add_argument("--host", default=os.environ.get("GLP_HOST", "localhost"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("GLP_PORT", "8443")))
+    parser.add_argument("--cafile", help="Cert tin cậy của server cho client (mặc định client/trusted-server.crt)")
+    parser.add_argument("--download-dir", default="downloads", help="Thư mục tải file (client)")
     args = parser.parse_args()
+    try:
+        if args.mode == "server":
+            from server.server import start_server
+            start_server(host=args.host, port=args.port)
+        else:
+            from client.client_cli import CLI
+            return CLI(args.host, args.port, cafile=args.cafile, download_dir=args.download_dir).run()
+    except (GLPError, OSError) as error:
+        print(error_message(str(error)), file=sys.stderr)
+        return 1
 
-    if args.mode == "server":
-        print("[*] Khởi động hệ thống Server...")
-        from server.server import start_server
-        start_server(host=args.host, port=args.port)
-        
-    else:
-        from client.client import GLPApp as ClientApp
-        ClientApp(args.host, args.port).run()
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

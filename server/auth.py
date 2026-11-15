@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from secrets import token_hex
 from time import time
 
+from Error import AppError, SessionError
 from . import db 
-from .config import AppError
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class AuthService:
         for token, session in list(self.session_manager.items()):
             if session.expires <= time(): del self.session_manager[token]
         if any(session.connection_id is connection_id for session in self.session_manager.values()):
-            raise AppError("Connection đã login; logout trước khi đổi account", "INVALID_STATE")
+            raise AppError("Connection đã login. Hãy logout trước khi đổi account")
 
     """Update session to session manage"""
     def _new_session(self, user_id: str, ip_addr: str, connection_id: object) -> Session:
@@ -66,7 +66,7 @@ class AuthService:
             del self.session_manager[token]
             session = None
         if session is None or session.connection_id is not connection_id:
-            raise AppError("Session không tồn tại, hết hạn hoặc sai connection", "SESSION_INVALID")
+            raise SessionError("Session không tồn tại, hết hạn hoặc sai connection")
         return session
 
 
@@ -96,7 +96,12 @@ class UserManager:
     def remove(self, conn):
         if conn in self.conns:
             user_id = self.conns.pop(conn)
-            self.users.pop(user_id, None)
+            if self.users.get(user_id) is conn:
+                remaining = [peer for peer, uid in self.conns.items() if uid == user_id]
+                if remaining:
+                    self.users[user_id] = remaining[-1]
+                else:
+                    self.users.pop(user_id, None)
 
     def user_ids(self) -> list: return list(self.users.keys())
     def get_conn(self, user_id): return self.users.get(user_id)
