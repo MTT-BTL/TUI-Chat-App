@@ -2,8 +2,6 @@ FROM debian:trixie-slim
 
 WORKDIR /app
 
-RUN mkdir -p ./server/.runtime ./server/download
-
 ENV APP_DATA_DIR=./server/.runtime
 
 COPY build/server-app ./server-app
