@@ -1,4 +1,4 @@
 *
 !Dockerfile
-!build/
-!build/server-app
+!dist/
+!dist/server-app
