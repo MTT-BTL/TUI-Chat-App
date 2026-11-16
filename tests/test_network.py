@@ -1,11 +1,11 @@
 """TCP/TLS thật trên loopback: backend/stream/chat/heartbeat và lỗi kết nối."""
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
 from pathlib import Path
 import queue
 import socket
 import ssl
-import subprocess
 from tempfile import TemporaryDirectory
 import threading
 import time
@@ -24,11 +24,7 @@ class NetworkTests(unittest.TestCase):
     def setUpClass(cls):
         folder = TemporaryDirectory(prefix="glp-test-tls-")
         cls.addClassCleanup(folder.cleanup)
-        pem = str(Path(folder.name) / "server.pem")
-        subprocess.run([
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-            "-subj", "/CN=GLP-test", "-out", pem, "-keyout", pem,
-        ], check=True, stderr=subprocess.DEVNULL)
+        pem = Path(folder.name) / "server.pem"
         tls = patch.multiple(GLP_Connection, _server_pem=pem, _server_tls=None)
         tls.start()
         cls.addClassCleanup(tls.stop)
@@ -39,11 +35,11 @@ class NetworkTests(unittest.TestCase):
         return live
 
     def test_counted_download_chat_pushes_and_heartbeat_share_one_connection(self):
-        with patch.object(server, "HEARTBEAT_TIMEOUT", 0.2):
+        with patch.object(server, "HEARTBEAT_TIMEOUT", 0.5):
             live = self.live()
-            alice, alice_events = live.backend("sender01", interval=0.03)
-            bob, bob_events = live.backend("receiver", interval=0.03)
-            eve, eve_events = live.backend("third001", interval=0.03)
+            alice, _ = live.backend("sender01", interval=0.12)
+            bob, bob_events = live.backend("receiver", interval=0.12)
+            eve, eve_events = live.backend("third001", interval=0.12)
             source = live.folder / "tệp nhị phân.bin"
             payload = (bytes(range(256)) + b"\r\nGLP\r\n\x00\xff") * 2100
             source.write_bytes(payload)
@@ -57,7 +53,7 @@ class NetworkTests(unittest.TestCase):
 
             def slow_frames(download):
                 for frame in old_frames(download):
-                    time.sleep(0.025)
+                    time.sleep(0.04)
                     yield frame
 
             def send_messages():
@@ -234,7 +230,7 @@ class NetworkTests(unittest.TestCase):
                     conn.send(Response("OK.PONG"))
 
         live = self.live(ignore_requests)
-        client, _ = live.backend(interval=0.03)
+        client, _ = live.backend()
         client.REQUEST_TIMEOUT = 0.15
         with self.assertRaises(TimeoutError):
             client.list_chats()
@@ -242,12 +238,32 @@ class NetworkTests(unittest.TestCase):
         with self.assertRaises(ConnectionError):
             client.list_chats()
 
-    def test_tls_and_login_with_only_host_and_port(self):
+    def test_tls_and_login_track_the_peer_endpoint(self):
         live = self.live()
         client, _ = live.backend("student1")
         self.assertIsInstance(client._conn.sock, ssl.SSLSocket)
         self.assertEqual(client._conn.sock.version(), "TLSv1.3")
+        session = live.auth.session_manager[client._session]
+        self.assertEqual((session.ip_addr, session.peer_port), client._conn.sock.getsockname())
         self.assertTrue(client.list_chats().ok)
+
+    def test_twenty_clients_list_each_other_and_receive_global_chat(self):
+        live = self.live()
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            peers = list(pool.map(live.backend, (f"student{i:02d}" for i in range(20))))
+        users = {client.user["user_id"] for client, _ in peers}
+        self.assertEqual(len(users), 20)
+        for client, _ in peers:
+            result = client.list_chats()
+            self.assertTrue(result.ok)
+            online = {item["target"] for item in result.data if item["online"]}
+            self.assertEqual(online - {"GLOBAL", client.user["user_id"]}, users - {client.user["user_id"]})
+        sender = peers[0][0]
+        self.assertTrue(sender.send_chat("GLOBAL", "Tin nhắn thử tải").ok)
+        for _, events in peers[1:]:
+            event = events.get(timeout=2)
+            self.assertEqual(event.kind, "message")
+            self.assertEqual(event.data["content"], "Tin nhắn thử tải")
 
     def test_server_missing_ping_expires_session_and_partial_upload(self):
         with patch.object(server, "HEARTBEAT_TIMEOUT", 0.2):

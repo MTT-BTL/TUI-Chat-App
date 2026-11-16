@@ -2,7 +2,7 @@ from hashlib import sha256
 import json
 import unittest
 
-from support import Fixture
+from support import Fixture, db
 from file_transfer import CHUNK_SIZE, segment_count
 from server.files import PAGE_SIZE, Download, FileService
 
@@ -138,3 +138,28 @@ class FileTests(unittest.TestCase):
                 path.write_bytes(b"a")
             frames = list(self.fx.call(self.bob, "FILE.DOWNLOAD", meta["file_id"].encode()).frames())
             self.assertEqual([frame.action for frame in frames], ["ERROR.FILE"])
+
+    def test_reopening_database_preserves_private_file(self):
+        payload = b"persisted file\x00\xff"
+        meta = self.upload(payload, self.fx.ids[self.bob])
+        reopened = db.connect(self.fx.folder / "test.db")
+        self.addCleanup(reopened.close)
+        db.init(reopened)
+        self.fx.messages.files = FileService(reopened, self.fx.folder / "files")
+        self.assertEqual(db.login(reopened, "bobby001", "test-password"), self.fx.ids[self.bob].decode())
+        result = self.fx.call(self.bob, "FILE.DOWNLOAD", meta["file_id"].encode())
+        header, data = list(result.frames())
+        self.assertEqual(json.loads(header.args[0])["sha256"], sha256(payload).hexdigest())
+        self.assertEqual(data.args[2], payload)
+
+    def test_storage_failure_cleans_file_after_rename(self):
+        self.fx.database.execute("""
+            CREATE TRIGGER reject_file BEFORE INSERT ON files
+            BEGIN SELECT RAISE(ABORT, 'test storage failure'); END
+        """)
+        ready = self.start_upload(b"abc")
+        self.assertEqual(ready.action, "FILE.READY")
+        result = self.fx.call(self.alice, "FILE.SEGMENT", ready.args[0], b"0", b"abc")
+        self.assertEqual(result.action, "ERROR.FILE")
+        self.assertEqual(list((self.fx.folder / "files").iterdir()), [])
+        self.assertEqual(self.fx.database.execute("SELECT COUNT(*) FROM files").fetchone()[0], 0)

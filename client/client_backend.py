@@ -126,7 +126,7 @@ class Backend:
                 try:
                     frame = self._conn.recv()
                 except TimeoutError:
-                    continue  # Heartbeat kiểm tra peer, kể cả khi socket đang idle.
+                    continue
                 if not isinstance(frame, Response):
                     raise ProtocolError("Server phải gửi Response")
                 if frame.session_update != HOLDING_SESSION:
@@ -293,7 +293,6 @@ class Backend:
                         writer.append(index, data)
                         self._progress("Nhận", writer.next_index, meta.segments)
 
-            # Đã đọc đủ N frame. Lỗi hash hoặc lưu local vẫn có thể giữ kết nối.
             writer.verify()
             name = Path(meta.name)
             destination = folder / name

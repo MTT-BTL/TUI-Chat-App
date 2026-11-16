@@ -16,7 +16,7 @@ def reply(action, *args, session_update=HOLDING_SESSION):
     ))
 
 
-def dispatch(request, auth, connection, ip_addr, online, message):
+def dispatch(request, auth, connection, ip_addr, online, message, *, peer_port=None):
     if not isinstance(request, Request):
         return error_response("ERROR.CLIENT", "Server chỉ nhận Request")
     try:
@@ -30,7 +30,7 @@ def dispatch(request, auth, connection, ip_addr, online, message):
             return reply("OK.PONG")
         if route in ("AUTH.LOGIN", "AUTH.REGISTER"):
             method = auth.login if route == "AUTH.LOGIN" else auth.register
-            session = method(*args, ip_addr=ip_addr, connection_id=connection)
+            session = method(*args, ip_addr=ip_addr, connection_id=connection, peer_port=peer_port)
             online.add(connection, session.user_id, ip_addr)
             user = auth.db.execute(
                 "SELECT user_id,username,dispname FROM users WHERE user_id=?", (session.user_id,)

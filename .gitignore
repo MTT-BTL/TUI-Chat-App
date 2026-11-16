@@ -1,7 +1,11 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+/.venv/
+/.vscode/
 /server/.runtime/
 /client/trusted-server.crt
 /downloads/
+/REPORT.*
+/.report-build/
 *.key

@@ -100,8 +100,7 @@ class FileService:
 
     def _upload(self, connection, session, raw_id):
         upload = self.uploads.get(connection)
-        if (upload is None or upload.file_id != raw_id.decode("ascii")
-                or upload.token != session.token):
+        if (upload is None or upload.file_id != raw_id.decode("ascii") or upload.token != session.token):
             raise FileError("Không có upload này trên session hiện tại")
         return upload
 
@@ -146,8 +145,7 @@ class FileService:
             if route not in self.COUNTS or len(args) != self.COUNTS[route]:
                 raise FileError("Route FILE hoặc số args không đúng")
             if route == "FILE.UPLOAD":
-                if connection in self.uploads:
-                    raise FileError("Hoàn tất/hủy upload hiện tại trước")
+                if connection in self.uploads: raise FileError("Hoàn tất/hủy upload hiện tại trước")
                 receiver = self._target(args[0])
                 metadata = FileMetadata.from_dict(json.loads(args[1]))
                 file_id = uuid4().hex
@@ -156,8 +154,7 @@ class FileService:
                 upload = Upload(file_id, session.user_id, receiver, session.token, path, writer)
                 self.uploads[connection] = upload
                 started = True
-                if writer.complete:
-                    return self._store(connection, upload, online)
+                if writer.complete: return self._store(connection, upload, online)
                 return reply("READY", file_id, metadata.segments)
             if route == "FILE.SEGMENT":
                 upload = self._upload(connection, session, args[0])
@@ -180,8 +177,7 @@ class FileService:
                 if cursor:
                     where += " AND f.seq < ?"
                     values.append(cursor)
-                rows = self.db.execute(self.SELECT + " WHERE " + where
-                                       + " ORDER BY f.seq DESC LIMIT ?", values + [PAGE_SIZE + 1]).fetchall()
+                rows = self.db.execute(self.SELECT + " WHERE " + where + " ORDER BY f.seq DESC LIMIT ?", values + [PAGE_SIZE + 1]).fetchall()
                 page = [self._metadata(row) for row in rows[:PAGE_SIZE]]
                 cursor = str(page[-1]["seq"]) if len(rows) > PAGE_SIZE else ""
                 return reply("ITEMS", args[0], packed(page), cursor)

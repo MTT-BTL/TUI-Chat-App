@@ -13,6 +13,7 @@ class Session:
     expires: float
     connection_id: object
     ip_addr: str
+    peer_port: int | None = None
 
 def valid_str_input(value: bytes) -> bool: return isinstance(value, bytes) and bool(value) and all(0x20 <= c < 0x7f for c in value)
 
@@ -38,26 +39,29 @@ class AuthService:
             raise AppError("Connection đã login. Hãy logout trước khi đổi account")
 
     """Update session to session manage"""
-    def _new_session(self, user_id: str, ip_addr: str, connection_id: object) -> Session:
+    def _new_session(self, user_id: str, ip_addr: str, connection_id: object,
+                     peer_port: int | None) -> Session:
         token = token_hex(16)  # 16 random bytes -> 32 lowercase hex, đúng header GLP.
         while token in self.session_manager: token = token_hex(16)
-        session = Session(token, user_id, time() + self.session_ttl, connection_id, ip_addr)
+        session = Session(token, user_id, time() + self.session_ttl, connection_id, ip_addr, peer_port)
         self.session_manager[token] = session
         return session
     
     """Checking in database, return blinded session"""
-    def login(self, username: bytes, password: bytes, ip_addr: str, connection_id: object) -> Session:
+    def login(self, username: bytes, password: bytes, ip_addr: str, connection_id: object,
+              *, peer_port: int | None = None) -> Session:
         username_text, password_text = self._user_account(username, password)
         self._available(connection_id)
         user_id = db.login(self.db, username_text, password_text)
-        return self._new_session(user_id, ip_addr, connection_id)
+        return self._new_session(user_id, ip_addr, connection_id, peer_port)
     
     """Checking in database, return blinded session, default displayname is username"""
-    def register(self, username: bytes, password: bytes, ip_addr: str, connection_id: object) -> Session:
+    def register(self, username: bytes, password: bytes, ip_addr: str, connection_id: object,
+                 *, peer_port: int | None = None) -> Session:
         username_text, password_text = self._user_account(username, password)
         self._available(connection_id)  
         user_id, _, _ = db.register(self.db, username_text, password_text, username_text)
-        return self._new_session(user_id, ip_addr, connection_id)
+        return self._new_session(user_id, ip_addr, connection_id, peer_port)
 
     """Check if the connection had a sesison"""
     def get_session(self, token: str, connection_id: object) -> Session:

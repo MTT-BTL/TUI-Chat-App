@@ -1,1 +1,2 @@
+# Tạo chứng chỉ TLS tự ký trong GLPConn.py.
 cryptography==50.0.2

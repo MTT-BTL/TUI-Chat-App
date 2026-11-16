@@ -1,6 +1,3 @@
-"""Các lỗi do ứng dụng tạo đều nhận một thông báo."""
-
-
 def error_message(message: str) -> str:
     text = message.strip().removeprefix("[!]").lstrip()
     return f"[!] {text}"

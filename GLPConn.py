@@ -94,8 +94,7 @@ class GLP_Connection:
                     cls._ensure_server_pem()
                     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                     context.minimum_version = ssl.TLSVersion.TLSv1_3
-                    try: 
-                        context.load_cert_chain(cls._server_pem)
+                    try: context.load_cert_chain(cls._server_pem)
                     except OSError as error: 
                         raise GLPConnectionError(f"Không nạp được PEM {cls._server_pem} ({error})") from error
                     cls._server_tls = context
