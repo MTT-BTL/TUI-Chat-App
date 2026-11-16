@@ -4,6 +4,7 @@ import socket
 import sys
 import threading
 import time
+from os import getenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -17,7 +18,7 @@ from server.chat import MessageService
 from server.router import dispatch
 from server.files import Download, FileService
 
-RUNTIME_DIR = Path(__file__).with_name(".runtime")
+RUNTIME_DIR = Path(getenv("APP_DATA_DIR")) if getenv("APP_DATA_DIR") else Path(__file__).with_name(".runtime") 
 app_lock = threading.Lock()
 PING_INTERVAL = 15.0
 MAX_MISSED_PINGS = 4
