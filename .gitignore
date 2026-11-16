@@ -10,3 +10,4 @@ __pycache__/
 /.report-build/
 *.key
 /build
+/dist

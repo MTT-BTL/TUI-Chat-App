@@ -4,7 +4,7 @@ WORKDIR /app
 
 ENV APP_DATA_DIR=./server/.runtime
 
-COPY build/server-app ./server-app
+COPY dist/server-app ./server-app
 
 RUN chmod 0755 ./server-app \
     && mkdir -p ./server/.runtime ./server/download
