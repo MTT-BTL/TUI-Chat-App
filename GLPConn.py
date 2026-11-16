@@ -4,6 +4,12 @@ import socket
 import ssl
 import threading
 import time
+import datetime
+import os
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from Error import GLPConnectionError, GLPTimeoutError, PeerClosedError, ProtocolError
 from GLP import (CRLF, DEFAULT_SESSION, MAGIC_BYTES, MAX_ARG, MAX_ARGS, MAX_FRAME,
@@ -21,6 +27,43 @@ class GLP_Connection:
         self.buffer = bytearray()
         self._send_lock = threading.Lock()
 
+
+    @classmethod
+    def _ensure_server_pem(cls):
+        pem_path = Path(cls._server_pem)
+        if pem_path.exists():
+            return
+
+        print("[!] No key found, generating new key")
+        pem_path.parent.mkdir(parents=True, exist_ok=True)
+
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "my-server")])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(private_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + datetime.timedelta(days=3650))
+            .sign(private_key, hashes.SHA256())
+        )
+
+        pem_path.write_bytes(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            + cert.public_bytes(serialization.Encoding.PEM)
+        )
+        pem_path.chmod(0o600)
+        print("[*] Generated new key")
+
+
+    # client only
     @classmethod
     def connect(cls, host, port, timeout=10):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -41,16 +84,20 @@ class GLP_Connection:
             sock.close()
             raise
 
+    # server only
     @classmethod
     def accept(cls, sock, *, timeout=10):
         try:
             with cls._server_tls_lock:
                 context = cls._server_tls
                 if context is None: # TLS handshake (Server side)
+                    cls._ensure_server_pem()
                     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                     context.minimum_version = ssl.TLSVersion.TLSv1_3
-                    try: context.load_cert_chain(cls._server_pem)
-                    except OSError as error: raise GLPConnectionError(f"Không nạp được PEM {cls._server_pem} ({error})") from error
+                    try: 
+                        context.load_cert_chain(cls._server_pem)
+                    except OSError as error: 
+                        raise GLPConnectionError(f"Không nạp được PEM {cls._server_pem} ({error})") from error
                     cls._server_tls = context
             sock.settimeout(timeout)
             sock = context.wrap_socket(sock, server_side=True)
@@ -64,11 +111,13 @@ class GLP_Connection:
             sock.close()
             raise
 
+    # both 
     def send(self, frame: Request | Response):
         wire = frame.to_bytes()  # Validate trước khi ghi bất kỳ byte nào.
         with self._send_lock:
             self.sock.sendall(wire)
 
+    # ulti function call by recv which called by both
     def _parse(self) -> Request | Response | None:
         position = len(MAGIC_BYTES)
         if len(self.buffer) < position:
@@ -131,6 +180,7 @@ class GLP_Connection:
         del self.buffer[:position]
         return frame
 
+    # both
     def recv(self, *, deadline: float | None = None) -> Request | Response:
         previous = self.sock.gettimeout()
         try:
@@ -153,5 +203,6 @@ class GLP_Connection:
             if deadline is not None and self.sock.fileno() != -1:
                 self.sock.settimeout(previous)
 
+    # both
     def close(self):
         self.sock.close()
