@@ -2,7 +2,8 @@ FROM debian:trixie-slim
 
 WORKDIR /app
 
-ENV APP_DATA_DIR=./server/.runtime
+ENV APP_DATA_DIR=./server/.runtime \
+    PYTHONUNBUFFERED=1
 
 COPY dist/server-app ./server-app
 

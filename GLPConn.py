@@ -34,7 +34,7 @@ class GLP_Connection:
         if pem_path.exists():
             return
 
-        print("[!] No key found, generating new key")
+        print("[!] No key found, generating new key", flush=True)
         pem_path.parent.mkdir(parents=True, exist_ok=True)
 
         private_key = ec.generate_private_key(ec.SECP256R1())
@@ -60,7 +60,7 @@ class GLP_Connection:
             + cert.public_bytes(serialization.Encoding.PEM)
         )
         pem_path.chmod(0o600)
-        print("[*] Generated new key")
+        print("[*] Generated new key", flush=True)
 
 
     # client only

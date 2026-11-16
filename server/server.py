@@ -25,7 +25,7 @@ MAX_MISSED_PINGS = 4
 HEARTBEAT_TIMEOUT = PING_INTERVAL * MAX_MISSED_PINGS
 
 def handle_client(conn: GLP_Connection, addr, auth_service, online, message):
-    print(f"[+] Client {addr} đã kết nối TLS 1.3.")
+    print(f"[+] Client {addr} đã kết nối TLS 1.3.",flush=True)
     last_ping = time.monotonic()
     stream_worker = None
 
@@ -64,9 +64,9 @@ def handle_client(conn: GLP_Connection, addr, auth_service, online, message):
                 if request.route == "FILE.SEGMENT" and response.action != "FILE.STORED":
                     break
     except EOFError:
-        print(f"[-] Client {addr} ngắt kết nối.")
+        print(f"[-] Client {addr} ngắt kết nối.",flush=True)
     except (OSError, ProtocolError) as error:
-        print(f"{error_message(str(error))} (kết nối {addr})")
+        print(f"{error_message(str(error))} (kết nối {addr})",flush=True)
     finally:
         try: conn.sock.shutdown(socket.SHUT_RDWR)
         except OSError: pass
@@ -107,6 +107,6 @@ def start_server(host="127.0.0.1", port=8443, max_workers=20, *, discovery_port=
                     glp_conn = GLP_Connection.accept(client_sock, timeout=30.0)
                     executor.submit(handle_client, glp_conn, addr, auth_service, online, message)
                 except (OSError, EOFError, ProtocolError) as error:
-                    print(error_message(str(error)))
+                    print(error_message(str(error)),flush=True)
         finally:
             stop_discovery(discovery)
